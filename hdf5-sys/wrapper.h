@@ -1,0 +1,15 @@
+#ifndef F_RDLCK
+/* For posix fcntl() and `l_type' field of a `struct flock' for lockf().  */
+# define F_RDLCK		0	/* Read lock.  */
+# define F_WRLCK		1	/* Write lock.  */
+# define F_UNLCK		2	/* Remove lock.  */
+#endif
+
+
+/* For old implementation of BSD flock.  */
+#ifndef F_EXLCK
+# define F_EXLCK		4	/* or 3 */
+# define F_SHLCK		8	/* or 4 */
+#endif
+
+#include "hdf5.h";
