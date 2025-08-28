@@ -3,17 +3,13 @@ use hdf5_sys::*;
 use std::{
     ffi::{CStr, CString, c_char},
     fs::File,
-    io::{Read, Seek, SeekFrom},
+    io::{BufReader, Read, Seek, SeekFrom},
     mem::MaybeUninit,
     str::FromStr,
     usize,
 };
 
-use exports::foxglove::loader::loader::{
-    BackfillArgs, Channel, DataLoader, Guest, GuestDataLoader, GuestMessageIterator, Message,
-    MessageIterator, MessageIteratorArgs, TimeRange,
-};
-use foxglove::loader::{
+use foxglove_data_loader::{
     console,
     reader::{Reader, open},
 };
@@ -29,7 +25,7 @@ struct WasmFile {
     //
     parent: H5FD_t,
     // fields from here are private to this vfs
-    reader: Reader,
+    reader: BufReader<Reader>,
     size: u64,
     eoa: u64,
 }
@@ -47,8 +43,8 @@ unsafe extern "C" fn vfs_hdf5_open(
     console::log(&format!("file name: {path:?}"));
 
     let reader = open(&*path);
-
     let size = reader.size();
+    let reader = BufReader::new(reader);
 
     let file = Box::new(WasmFile {
         parent: H5FD_t {
@@ -120,10 +116,10 @@ unsafe extern "C" fn vfs_read(
     let wasm_file: *mut WasmFile = file as _;
     let file = &mut *wasm_file;
 
-    let pos = file.reader.position();
+    let pos = file.reader.stream_position().unwrap();
 
     if pos != addr {
-        file.reader.seek(addr);
+        file.reader.seek(SeekFrom::Start(addr)).unwrap();
     }
 
     let slice = std::slice::from_raw_parts_mut(buffer as *mut u8, size);
@@ -132,7 +128,10 @@ unsafe extern "C" fn vfs_read(
     let mut pos = 0;
 
     loop {
-        let written = (&mut *file).reader.read(&mut slice[pos as usize..]);
+        let written = (&mut *file)
+            .reader
+            .read(&mut slice[pos as usize..])
+            .unwrap();
 
         if written == 0 {
             break;
@@ -140,7 +139,7 @@ unsafe extern "C" fn vfs_read(
 
         pos += written;
 
-        if pos >= size as u64 {
+        if pos >= size {
             break;
         }
     }
@@ -148,7 +147,7 @@ unsafe extern "C" fn vfs_read(
     0
 }
 
-const WASM_VFS: H5FD_class_t = H5FD_class_t {
+pub const WASM_VFS: H5FD_class_t = H5FD_class_t {
     name: c"wasm_vfs".as_ptr(),
     truncate: None,
     sb_size: None,

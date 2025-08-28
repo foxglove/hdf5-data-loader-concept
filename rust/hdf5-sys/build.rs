@@ -1,10 +1,18 @@
 use std::{env, path::PathBuf};
 
 fn main() {
+    let wasi_sdk_dir = env::var("WASI_SDK_PATH").unwrap_or_else(|_| "/opt/wasi-sdk/".into());
+    let wasi_sdk_dir = PathBuf::from(wasi_sdk_dir);
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("failed to get manifest dir");
+    let package_root = PathBuf::from(manifest_dir);
+
     let dst = cmake::Config::new("hdf5")
         .define(
             "CMAKE_TOOLCHAIN_FILE",
-            "/opt/wasi-sdk/share/cmake/wasi-sdk-p1.cmake",
+            wasi_sdk_dir
+                .join("share/cmake/wasi-sdk-p1.cmake")
+                .to_string_lossy()
+                .to_string(),
         )
         .define("BUILD_SHARED_LIBS", "off")
         .define("HDF5_BUILD_EXAMPLES", "off")
@@ -22,8 +30,14 @@ fn main() {
         .cflag("-mllvm -wasm-enable-sjlj")
         .cflag("-D_WASI_EMULATED_SIGNAL")
         .cflag("-lwasi-emulated-signal")
-        .cflag("-include /home/bennett/foxglove/hdf5-wasm-poc/hdf5-sys/lck.h")
-        .cflag("-include /home/bennett/foxglove/hdf5-wasm-poc/hdf5-sys/tzset.h")
+        .cflag(format!(
+            "-include {}",
+            package_root.join("lck.h").to_string_lossy()
+        ))
+        .cflag(format!(
+            "-include {}",
+            package_root.join("tzset.h").to_string_lossy()
+        ))
         .build();
 
     println!("cargo:warning=output is {}", dst.display());
@@ -36,7 +50,11 @@ fn main() {
         // bindings for.
         .header("wrapper.h")
         .clang_arg(format!("-I{}/include", dst.display()))
-        .clang_arg("--sysroot=/opt/wasi-sdk/share/wasi-sysroot")
+        .clang_arg(format!(
+            "--sysroot={}",
+            wasi_sdk_dir.join("share/wasi-sysroot").to_string_lossy()
+        ))
+        // needed to get the vfs symbols
         .clang_arg("-DH5_BUILT_AS_DYNAMIC_LIB")
         // Tell cargo to invalidate the built crate whenever any of the
         // included header files changed.
@@ -53,5 +71,5 @@ fn main() {
         .expect("Couldn't write bindings!");
 
     println!("cargo:rustc-link-search=native={}/lib", dst.display());
-    println!("cargo:rustc-link-lib=hdf5_debug");
+    println!("cargo:rustc-link-lib=static=hdf5");
 }

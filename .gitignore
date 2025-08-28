@@ -1,2 +1,8 @@
+/dist
+/node_modules
+Cargo.lock
 /target
 /hdf5-sys/target
+/rust/target
+/rust/hdf5-sys/target
+*.foxe

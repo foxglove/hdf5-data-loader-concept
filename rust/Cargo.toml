@@ -1,15 +1,12 @@
 [package]
-name = "hdf5-wasm-poc"
+name = "foxglove-data-loader"
 version = "0.1.0"
 edition = "2024"
 
 [lib]
 crate-type = ["cdylib"]
 
-# [build-dependencies]
-# bindgen = "0.71.1"
-# pkg-config = "0.3.32"
-
 [dependencies]
-wit-bindgen = "0.42.1"
+anyhow = "1.0"
+foxglove_data_loader = "0.1.0"
 hdf5-sys = { path = "./hdf5-sys/" }
