@@ -7,6 +7,8 @@ When opening a file it gets some info and creates topics for each of the links i
 
 ## Building
 
+Clone this repo with submodules. The hdf5 source is currently included as a submodule.
+
 Install rust with [rustup](https://www.rust-lang.org/tools/install), then install wasm32-wasip1 support:
 
 ```
