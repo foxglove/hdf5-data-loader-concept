@@ -9,4 +9,10 @@ export function activate(extensionContext: Experimental.ExtensionContext): void 
     wasmUrl,
     supportedFileType: ".h5",
   });
+
+  extensionContext.registerDataLoader({
+    type: "file",
+    wasmUrl,
+    supportedFileType: ".hdf",
+  });
 }

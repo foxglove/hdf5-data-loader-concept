@@ -6,14 +6,9 @@ fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("failed to get manifest dir");
     let package_root = PathBuf::from(manifest_dir);
 
-    let dst = cmake::Config::new("hdf5")
-        .define(
-            "CMAKE_TOOLCHAIN_FILE",
-            wasi_sdk_dir
-                .join("share/cmake/wasi-sdk-p1.cmake")
-                .to_string_lossy()
-                .to_string(),
-        )
+    let mut config = cmake::Config::new("hdf5");
+
+    config
         .define("BUILD_SHARED_LIBS", "off")
         .define("HDF5_BUILD_EXAMPLES", "off")
         .define("HDF5_BUILD_TOOLS", "off")
@@ -26,34 +21,53 @@ fn main() {
         .define("HDF5_EXTERNALLY_CONFIGURED", "1")
         .define("H5_HAVE_GETPWUID", "off")
         .define("H5_HAVE_SIGNAL", "off")
-        .define("H5_HAVE_FEATURES_H", "off")
-        .cflag("-mllvm -wasm-enable-sjlj")
-        .cflag("-D_WASI_EMULATED_SIGNAL")
-        .cflag("-lwasi-emulated-signal")
-        .cflag(format!(
-            "-include {}",
-            package_root.join("lck.h").to_string_lossy()
-        ))
-        .cflag(format!(
-            "-include {}",
-            package_root.join("tzset.h").to_string_lossy()
-        ))
-        .build();
+        .define("H5_HAVE_FEATURES_H", "off");
+
+    let target_arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+
+    if target_arch == "wasm32" {
+        config
+            .define(
+                "CMAKE_TOOLCHAIN_FILE",
+                wasi_sdk_dir
+                    .join("share/cmake/wasi-sdk-p1.cmake")
+                    .to_string_lossy()
+                    .to_string(),
+            )
+            .cflag("-mllvm -wasm-enable-sjlj")
+            .cflag("-D_WASI_EMULATED_SIGNAL")
+            .cflag("-lwasi-emulated-signal")
+            .cflag(format!(
+                "-include {}",
+                package_root.join("lck.h").to_string_lossy()
+            ))
+            .cflag(format!(
+                "-include {}",
+                package_root.join("tzset.h").to_string_lossy()
+            ));
+    }
+
+    let dst = config.build();
 
     println!("cargo:warning=output is {}", dst.display());
 
     // The bindgen::Builder is the main entry point
     // to bindgen, and lets you build up options for
     // the resulting bindings.
-    let bindings = bindgen::Builder::default()
+    let mut builder = bindgen::Builder::default()
         // The input header we would like to generate
         // bindings for.
         .header("wrapper.h")
-        .clang_arg(format!("-I{}/include", dst.display()))
-        .clang_arg(format!(
+        .clang_arg(format!("-I{}/include", dst.display()));
+
+    if target_arch == "wasm32" {
+        builder = builder.clang_arg(format!(
             "--sysroot={}",
             wasi_sdk_dir.join("share/wasi-sysroot").to_string_lossy()
-        ))
+        ));
+    }
+
+    let bindings = builder
         // needed to get the vfs symbols
         .clang_arg("-DH5_BUILT_AS_DYNAMIC_LIB")
         // Tell cargo to invalidate the built crate whenever any of the
