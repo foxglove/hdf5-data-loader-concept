@@ -13,3 +13,8 @@
 #endif
 
 #include "hdf5.h";
+
+size_t H5Z_lzf_filter(unsigned int flags, size_t cd_nelmts, const unsigned int cd_values[],
+                             size_t nbytes, size_t *buf_size, void **buf);
+
+herr_t        H5Z_lzf_set_local(hid_t dcpl, hid_t type, hid_t space);
