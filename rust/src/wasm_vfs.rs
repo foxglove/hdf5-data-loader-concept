@@ -51,9 +51,9 @@ unsafe extern "C" fn vfs_hdf5_open(
             driver_id: 0,
             cls: (&WASM_VFS) as *const _,
             fileno: 0,
-            access_flags: 0,
+            access_flags: flags,
             feature_flags: 0,
-            maxaddr: 0,
+            maxaddr,
             base_addr: 0,
             threshold: 0,
             alignment: 0,
@@ -62,7 +62,7 @@ unsafe extern "C" fn vfs_hdf5_open(
 
         reader,
         size,
-        eoa: 0,
+        eoa: size,
     });
 
     Box::leak(file) as *mut _ as *mut H5FD_t
@@ -100,7 +100,7 @@ unsafe extern "C" fn vfs_write(
 ) -> herr_t {
     console::error("tried to call write");
 
-    1
+    -1
 }
 
 unsafe extern "C" fn vfs_read(
@@ -144,7 +144,7 @@ unsafe extern "C" fn vfs_read(
         }
     }
 
-    0
+    if pos == 0 { -1 } else { 0 }
 }
 
 pub const WASM_VFS: H5FD_class_t = H5FD_class_t {
@@ -156,7 +156,7 @@ pub const WASM_VFS: H5FD_class_t = H5FD_class_t {
     value: 123,
 
     // stole this from somewhere:
-    maxaddr: (((1 as haddr_t) << (8 * std::mem::size_of::<usize>() - 1)) - 1),
+    maxaddr: !0u64 >> 1,
 
     fl_map: [
         H5F_mem_t_H5FD_MEM_SUPER, /*default*/
@@ -168,7 +168,7 @@ pub const WASM_VFS: H5FD_class_t = H5FD_class_t {
         H5F_mem_t_H5FD_MEM_SUPER, /*ohdr*/
     ],
 
-    fc_degree: H5F_close_degree_t_H5F_CLOSE_WEAK,
+    fc_degree: H5F_close_degree_t_H5F_CLOSE_STRONG,
     fapl_size: 0,
     dxpl_size: 0,
 
