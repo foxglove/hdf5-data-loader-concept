@@ -27,7 +27,7 @@ const H5Z_LZF: &'static H5Z_class1_t = &H5Z_class1_t {
     name: c"lzf".as_ptr(),
     filter: Some(H5Z_lzf_filter),
     set_local: Some(H5Z_lzf_set_local),
-    can_apply: None,
+    can_apply: None,        
 };
 
 pub fn init_lzf() {
@@ -125,6 +125,24 @@ impl ToNativeType for u64 {
     }
 }
 
+impl ToNativeType for i64 {
+    fn native_type() -> i64 {
+        unsafe { H5T_NATIVE_INT64_g }
+    }
+}
+
+impl ToNativeType for u8 {
+    fn native_type() -> i64 {
+        unsafe { H5T_NATIVE_UINT8_g }
+    }
+}
+
+impl ToNativeType for u16 {
+    fn native_type() -> i64 {
+        unsafe { H5T_NATIVE_UINT16_g }
+    }
+}
+
 impl ToNativeType for f64 {
     fn native_type() -> i64 {
         unsafe { H5T_NATIVE_FLOAT_g }
@@ -142,7 +160,7 @@ impl Dataset {
             .any(|x| self.name.contains(x));
 
         // time + width + height, or
-        // time + width + height + number of cameras
+        // time + width + height + other colors
         let is_image_dimensions = self.dimensions.len() == 3 || self.dimensions.len() == 4;
 
         is_image_name && is_image_dimensions
@@ -173,9 +191,7 @@ impl Dataset {
         let mut counts = dims.clone();
         counts[0] = 1;
 
-        let mut values = vec![T::default(); counts[1..].iter().copied().reduce(|a, b| a * b).unwrap() as usize];
-
-        println!("selecting hyperslab");
+        let mut values = vec![T::default(); counts[..].iter().copied().reduce(|a, b| a * b).unwrap() as usize];
 
         let status = unsafe {
             H5Sselect_hyperslab(
@@ -190,12 +206,8 @@ impl Dataset {
 
         assert_eq!(status, 0);
 
-        println!("create namespace");
-
         let memspace_id =
             unsafe { H5Screate_simple(ndims, counts.as_ptr() as *const _, std::ptr::null()) };
-
-        println!("reading");
 
         let status = unsafe {
             H5Dread(
@@ -209,8 +221,6 @@ impl Dataset {
         };
 
         assert_eq!(status, 0);
-
-        println!("closing");
 
         unsafe {
             H5Sclose(memspace_id);
@@ -236,7 +246,7 @@ impl Dataset {
             )
         };
 
-        let mut values = vec![T::default(); dims.iter().sum::<u64>() as usize];
+        let mut values = vec![T::default(); dims.iter().copied().reduce(|a, b| a * b).unwrap() as usize];
 
         let mut offsets = vec![0; ndims as _];
         offsets[0] = offset;
@@ -437,8 +447,6 @@ unsafe extern "C" fn hdf5_object_visit_callback(
             );
 
             H5Dclose(dset_id);
-
-            println!("dset: {dset_id}");
 
             let original_name =
                 CString::from_vec_with_nul(CStr::from_ptr(name).to_bytes_with_nul().to_vec())

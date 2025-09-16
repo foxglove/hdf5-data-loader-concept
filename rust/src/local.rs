@@ -44,6 +44,8 @@ fn main() -> anyhow::Result<()> {
 
         let (timestamp_data, _) = timestamp_dataset.read::<u64>(0)?;
 
+        assert_eq!(timestamp_data.len(), timestamp_dataset.dimensions[0] as _);
+
         for (i, timestamp) in timestamp_data.into_iter().enumerate() {
             let entry = timestamps.entry(timestamp).or_default();
             entry.push(i as u64);
@@ -56,16 +58,24 @@ fn main() -> anyhow::Result<()> {
             dataset.is_image_topic()
         );
 
+        if (!dataset.is_image_topic()) {
+            continue;
+        }
+
+        for ( _, entry ) in timestamps.iter() {
+            for i in entry {
         match dataset.type_ {
             DatasetType::Float => {
-                println!("data: {:?}", dataset.read_one::<f64>(0)?);
+                dataset.read_one::<f64>(*i)?;
             },
 
             DatasetType::Integer => {
-                println!("data: {:?}", dataset.read_one::<u64>(0)?);
+                dataset.read_one::<i64>(*i)?;
             },
 
             _ =>{ }
+        }
+            }
         }
 
         topics.push(Topic {

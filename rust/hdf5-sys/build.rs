@@ -7,9 +7,10 @@ fn main() {
     let package_root = PathBuf::from(manifest_dir);
 
     // let mut config = cmake::Config::new("/Users/bennett/git/hdf5/");
-    let mut config = cmake::Config::new("/Users/bennett/git/hdf5_with_plugins/");
+    let mut config = cmake::Config::new("hdf5_with_plugins");
 
     config
+        .define("CMAKE_BUILD_TYPE", "Release")
         // .define("BUILD_SHARED_LIBS", "on")
         // .define("BUILD_STATIC_LIBS", "on")
         // .define("HDF_PACKAGE_NAMESPACE", "hdf5::")
@@ -119,6 +120,8 @@ fn main() {
     println!("cargo:rustc-link-search=native={}/lib/plugin", dst.display());
     println!("cargo:rustc-link-lib=static=hdf5");
     println!("cargo:rustc-link-lib=static=zlib-static");
+    println!("cargo:rustc-link-lib=static=aec");
+    println!("cargo:rustc-link-lib=static=szaec");
     println!("cargo:rustc-link-lib=static=h5lzf");
     println!("cargo:rustc-link-lib=static=lzf");
 }

@@ -14,6 +14,8 @@ FetchContent_Declare(
   URL https://github.com/HDFGroup/hdf5/releases/download/hdf5_1.14.6/hdf5-1.14.6.tar.gz
 )
 
+set (TEST_LFS_WORKS_RUN ON CACHE BOOL "" FORCE)
+
 set (USE_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set (BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set (H5DF_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -26,6 +28,7 @@ set (HDF5_PACKAGE_EXTLIBS ON CACHE BOOL "" FORCE)
 
 set (HDF5_EXPORTED_TARGETS "hdf5-static" CACHE BOOL "" FORCE)
 set (ZLIB_EXPORTED_TARGETS "zlib-static" CACHE BOOL "" FORCE)
+set (LIBAEC_EXPORTED_TARGETS "aec-static" CACHE BOOL "" FORCE)
 
 set (ZLIB_PACKAGE_NAME "zlib" CACHE STRING "Name of ZLIB package" FORCE)
 set (ZLIB_TGZ_NAME "zlib-1.3.1.tar.gz" CACHE STRING "Use HDF5_ZLib from compressed file" FORCE)
@@ -39,7 +42,6 @@ set (ZLIBNG_TGZ_ORIGPATH "https://github.com/zlib-ng/zlib-ng/archive/refs/tags" 
 set (LIBAEC_PACKAGE_NAME "libaec" CACHE STRING "Name of AEC SZIP package" FORCE)
 set (LIBAEC_TGZ_NAME "libaec-1.1.3.tar.gz" CACHE STRING "Use SZip AEC from compressed file" FORCE)
 set (LIBAEC_TGZ_ORIGPATH "https://github.com/MathisRosenhauer/libaec/releases/download/v1.1.3" CACHE STRING "Use LIBAEC from original location" FORCE)
-set (LIBAEC_USE_LOCALCONTENT ON CACHE BOOL "Use local file for LIBAEC FetchContent" FORCE)
 set (HDF5_USE_LIBAEC_STATIC ON CACHE BOOL "Use static AEC library" FORCE)
 
 FetchContent_MakeAvailable(hdf5)

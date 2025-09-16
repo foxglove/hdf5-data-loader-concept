@@ -18,3 +18,4 @@
 #  define F_SETLK	6	/* Set record locking info (non-blocking).  */
 #  define F_SETLKW	7	/* Set record locking info (blocking).  */
 
+#define FE_INVALID          0x0001
