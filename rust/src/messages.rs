@@ -64,12 +64,7 @@ pub struct RawIntegerDataset {
 
 pub fn serialize_integer_raw(index: u64, dataset: &Dataset) -> anyhow::Result<Vec<u8>> {
     let mut dimensions = dataset.dimensions.clone();
-
-    let time_dimension = dataset
-        .time_dimension
-        .expect("will have time dimension by this point");
-
-    dimensions.remove(time_dimension);
+    dimensions.remove(0);
 
     let dataset = dataset.read_at_index::<u64>(index)?;
 
@@ -92,12 +87,7 @@ pub struct RawFloatDataset {
 
 pub fn serialize_float_raw(index: u64, dataset: &Dataset) -> anyhow::Result<Vec<u8>> {
     let mut dimensions = dataset.dimensions.clone();
-
-    let time_dimension = dataset
-        .time_dimension
-        .expect("will have time dimension by this point");
-
-    dimensions.remove(time_dimension);
+    dimensions.remove(0);
 
     let dataset = dataset.read_at_index::<f64>(index)?;
 

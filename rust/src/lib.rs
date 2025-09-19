@@ -190,7 +190,6 @@ impl DataLoader for Hdf5Loader {
                     if dataset.name.contains("time") || dataset.name.contains("Time") {
                         timestamp_dataset = Some(dataset);
                     }
-
                 }
             }
 
@@ -199,16 +198,6 @@ impl DataLoader for Hdf5Loader {
                     .tip(format!("Ensure that the dataset {}.timestamp exists or specify a time dataset with DIMENSION_LIST attribute.", dataset.name)));
                 continue;
             };
-
-            if dataset.time_dimension.is_none() {
-                init = init.add_problem(Problem::warn(format!("Unknown timestamp dimension for {}", dataset.name))
-                    .tip("Unable to determine what dimension of the dataset should be used for time."));
-                continue;
-            }
-
-            let mut topic_name: Option<String> = None;
-            let mut topic_schema: Option<Schema> = None;
-            let mut is_ros_2: Option<bool> = None;
 
             let mut timestamps: TimestampIndex = Default::default();
 

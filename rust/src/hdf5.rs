@@ -4,12 +4,15 @@
 use std::{
     cell::OnceCell,
     collections::BTreeMap,
-    ffi::{c_char, c_void, CStr, CString},
-    fmt::{write, Display},
+    ffi::{CStr, CString, c_char, c_void},
+    fmt::{Display, write},
     mem::MaybeUninit,
     ptr::null,
     str::FromStr,
-    sync::{atomic::{AtomicBool, AtomicUsize}, Arc, OnceLock},
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering},
+    },
 };
 
 use anyhow::bail;
@@ -115,7 +118,6 @@ pub struct Dataset {
     pub attrs: BTreeMap<String, Attribute>,
     pub references: Vec<String>,
     pub dimensions: Vec<u64>,
-    pub time_dimension: Arc<AtomicUsize>
 }
 
 pub trait ToNativeType: Default + Clone {
@@ -169,10 +171,6 @@ impl Dataset {
         let is_image_dimensions = self.dimensions.len() == 3 || self.dimensions.len() == 4;
 
         is_image_name && is_image_dimensions
-    }
-
-    pub fn time_dimension_count(&self) -> Option<u64> {
-        Some(self.dimensions[self.time_dimension?])
     }
 
     pub fn read_at_index<T: ToNativeType>(&self, offset: u64) -> anyhow::Result<Vec<T>> {
@@ -561,7 +559,6 @@ unsafe extern "C" fn hdf5_object_visit_callback(
                     dimensions: dims[..ndims as _].to_vec(),
                     attrs: attrs.attrs,
                     references: attrs.references,
-                    time_dimension: Some(0),
                 },
             );
         }
