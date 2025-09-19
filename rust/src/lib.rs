@@ -2,17 +2,22 @@ mod dlopen_stub;
 
 pub mod hdf5;
 pub mod log;
+pub mod messages;
 pub mod wasm_vfs;
 
-use core::time;
-use std::{collections::BTreeMap, u64};
+use std::{borrow::Cow, collections::BTreeMap};
 
-use foxglove::{Encode, schemas::RawImage};
+use foxglove::{Encode, Schema, schemas::RawImage};
 use hdf5::*;
+use messages::{
+    RawFloatDataset, RawIntegerDataset, serialize_float_raw, serialize_integer_raw,
+    serialize_mono16_raw_image, serialize_rgb8_raw_image,
+};
 use smallvec::SmallVec;
 
 use foxglove_data_loader::{
-    DataLoader, Initialization, Message, MessageIterator, MessageIteratorArgs, console,
+    BackfillArgs, DataLoader, Initialization, Message, MessageIterator, MessageIteratorArgs,
+    Problem, console,
 };
 
 struct Hdf5Iterator {
@@ -24,8 +29,19 @@ struct Hdf5Iterator {
     complete: bool,
 }
 
+macro_rules! handle {
+    ($e:expr) => {
+        match $e {
+            Err(e) => {
+                return Some(Err(e.into()));
+            }
+            Ok(x) => x,
+        }
+    };
+}
+
 impl MessageIterator for Hdf5Iterator {
-    type Error = String;
+    type Error = anyhow::Error;
 
     fn next(&mut self) -> Option<Result<Message, Self::Error>> {
         loop {
@@ -52,63 +68,12 @@ impl MessageIterator for Hdf5Iterator {
             let next_time = (self.current_time + 1024).min(self.end.unwrap_or(u64::MAX));
 
             for (channel_id, topic) in self.topics.iter() {
-                for (timestamp, indexes) in topic.timestamps.range(self.current_time..next_time) {
-                    for index in indexes {
-                        if topic.dataset.is_image_topic() {
-                            if topic.dataset.dimensions.len() == 3 {
-                                let mut data = topic.dataset.read_one::<u16>(*index).unwrap();
-
-                                for d in data.iter_mut() {
-                                    *d = d.to_le();
-                                }
-
-                                let data = unsafe { data.align_to::<u8>().1.to_vec() };
-
-                                let message = RawImage {
-                                    timestamp: None,
-                                    data: data.into(),
-                                    step: (topic.dataset.dimensions[2] * 2) as _,
-                                    width: topic.dataset.dimensions[2] as _,
-                                    height: topic.dataset.dimensions[1] as _,
-                                    encoding: "mono16".to_string(),
-                                    frame_id: Default::default(),
-                                };
-
-                                let mut data = vec![];
-                                message.encode(&mut data).unwrap();
-
-                                self.queue.entry(*timestamp).or_default().push(Message {
-                                    log_time: *timestamp,
-                                    publish_time: *timestamp,
-                                    channel_id: *channel_id,
-                                    data,
-                                });
-                            }
-
-                            if topic.dataset.dimensions.len() == 4 {
-                                let data = topic.dataset.read_one::<u8>(*index).unwrap();
-
-                                let message = RawImage {
-                                    timestamp: None,
-                                    data: data.into(),
-                                    step: (topic.dataset.dimensions[2] * 3) as _,
-                                    width: topic.dataset.dimensions[2] as _,
-                                    height: topic.dataset.dimensions[1] as _,
-                                    encoding: "rgb8".to_string(),
-                                    frame_id: Default::default(),
-                                };
-
-                                let mut data = vec![];
-                                message.encode(&mut data).unwrap();
-
-                                self.queue.entry(*timestamp).or_default().push(Message {
-                                    log_time: *timestamp,
-                                    publish_time: *timestamp,
-                                    channel_id: *channel_id,
-                                    data,
-                                });
-                            }
-                        }
+                for (timestamp, _) in topic.timestamps.range(self.current_time..next_time) {
+                    if let Some(messages) = topic.messages_at(*channel_id, *timestamp) {
+                        self.queue
+                            .entry(*timestamp)
+                            .or_default()
+                            .extend(handle!(messages));
                     }
                 }
             }
@@ -133,12 +98,39 @@ impl MessageIterator for Hdf5Iterator {
 
 type TimestampIndex = BTreeMap<u64, SmallVec<[u64; 4]>>;
 
+trait SerializeMessage: std::fmt::Debug {
+    fn to_message(&self, index: u64, dataset: &Dataset) -> Vec<u8>;
+}
+
 #[derive(Debug, Clone)]
 struct Topic {
-    name: String,
     dataset: Dataset,
-    message_count: u64,
     timestamps: TimestampIndex,
+    serialize_message: fn(u64, &Dataset) -> anyhow::Result<Vec<u8>>,
+}
+
+impl Topic {
+    fn messages_at(
+        &self,
+        channel_id: u16,
+        timestamp: u64,
+    ) -> Option<anyhow::Result<SmallVec<[Message; 4]>>> {
+        let indexes = self.timestamps.get(&timestamp)?;
+
+        let mut out = SmallVec::<[Message; 4]>::new();
+
+        for index in indexes {
+            let data = handle!((self.serialize_message)(*index, &self.dataset));
+            out.push(Message {
+                channel_id,
+                log_time: timestamp,
+                publish_time: timestamp,
+                data,
+            });
+        }
+
+        Some(Ok(out))
+    }
 }
 
 struct Hdf5Loader {
@@ -174,22 +166,53 @@ impl DataLoader for Hdf5Loader {
         let file = Hdf5File::open(&file)?;
         let datasets = file.get_datasets();
 
+        let mut channel_id: u16 = 0;
+
         for dataset in datasets.values() {
-            if dataset.name.ends_with(".timestamp") || dataset.name.ends_with(".parameters") {
+            if dataset.name.contains(".timestamp") {
                 continue;
             }
 
-            let timestamp_dataset = datasets.get(&format!("{}.timestamp", dataset.name));
-            let parameters_dataset = datasets.get(&format!("{}.parameters", dataset.name));
+            let mut timestamp_dataset = datasets.get(&format!("{}.timestamp", dataset.name));
+
+            error!("ATTRS: {:?}", dataset.attrs);
+
+            if let Some(Attribute::Vlen(dimensions)) = dataset.attrs.get("DIMENSION_LIST") {
+                for (index, dimension) in dimensions.iter().enumerate() {
+                    let Attribute::Reference(name) = dimension else {
+                        continue;
+                    };
+
+                    let Some(dataset) = datasets.get(name) else {
+                        continue;
+                    };
+
+                    if dataset.name.contains("time") || dataset.name.contains("Time") {
+                        timestamp_dataset = Some(dataset);
+                    }
+
+                }
+            }
 
             let Some(timestamp_dataset) = timestamp_dataset else {
-                println!("skipping {} due to no timestamp", dataset.name);
+                init = init.add_problem(Problem::warn(format!("Missing timestamps for {}", dataset.name))
+                    .tip(format!("Ensure that the dataset {}.timestamp exists or specify a time dataset with DIMENSION_LIST attribute.", dataset.name)));
                 continue;
             };
 
+            if dataset.time_dimension.is_none() {
+                init = init.add_problem(Problem::warn(format!("Unknown timestamp dimension for {}", dataset.name))
+                    .tip("Unable to determine what dimension of the dataset should be used for time."));
+                continue;
+            }
+
+            let mut topic_name: Option<String> = None;
+            let mut topic_schema: Option<Schema> = None;
+            let mut is_ros_2: Option<bool> = None;
+
             let mut timestamps: TimestampIndex = Default::default();
 
-            let (timestamp_data, _) = timestamp_dataset.read::<u64>(0)?;
+            let (timestamp_data, _) = timestamp_dataset.read::<u64>()?;
 
             let mut message_count = 0;
 
@@ -199,12 +222,81 @@ impl DataLoader for Hdf5Loader {
                 message_count += 1;
             }
 
-            self.topics.push(Topic {
-                name: dataset.name.clone(),
-                message_count,
-                dataset: dataset.clone(),
-                timestamps,
-            });
+            match dataset.type_ {
+                DatasetType::Integer => {
+                    self.topics.push(Topic {
+                        dataset: dataset.clone(),
+                        serialize_message: serialize_integer_raw,
+                        timestamps: timestamps.clone(),
+                    });
+
+                    init.add_encode::<RawIntegerDataset>()?
+                        .add_channel_with_id(channel_id, &dataset.name)
+                        .expect("not in use")
+                        .message_count(message_count);
+
+                    channel_id += 1;
+
+                    if dataset.is_image_topic() {
+                        if dataset.dimensions.len() == 3 {
+                            self.topics.push(Topic {
+                                dataset: dataset.clone(),
+                                serialize_message: serialize_mono16_raw_image,
+                                timestamps: timestamps.clone(),
+                            });
+
+                            init.add_encode::<RawImage>()?
+                                .add_channel_with_id(
+                                    channel_id,
+                                    &format!("{}/as_image", dataset.name),
+                                )
+                                .expect("not in use")
+                                .message_count(message_count);
+
+                            channel_id += 1;
+                        }
+
+                        if dataset.dimensions.len() == 4 {
+                            self.topics.push(Topic {
+                                dataset: dataset.clone(),
+                                serialize_message: serialize_rgb8_raw_image,
+                                timestamps,
+                            });
+
+                            init.add_encode::<RawImage>()?
+                                .add_channel_with_id(
+                                    channel_id,
+                                    &format!("{}/as_image", dataset.name),
+                                )
+                                .expect("not in use")
+                                .message_count(message_count);
+
+                            channel_id += 1;
+                        }
+                    }
+                }
+                DatasetType::Float => {
+                    self.topics.push(Topic {
+                        dataset: dataset.clone(),
+                        serialize_message: serialize_float_raw,
+                        timestamps,
+                    });
+
+                    init.add_encode::<RawFloatDataset>()?
+                        .add_channel_with_id(channel_id, &dataset.name)
+                        .expect("not in use")
+                        .message_count(message_count);
+
+                    channel_id += 1;
+                }
+                t => {
+                    init = init.add_problem(
+                        Problem::warn(format!("Unsupported format for {}", dataset.name))
+                            .tip(format!("The dataset type of {t:?} is not supported.")),
+                    );
+                    continue;
+                }
+            }
         }
 
         let min = self
@@ -227,20 +319,6 @@ impl DataLoader for Hdf5Loader {
 
         if let Some(max) = max {
             init = init.end_time(*max);
-        }
-
-        for (index, topic) in self.topics.iter().enumerate() {
-            if topic.dataset.is_image_topic() {
-                init.add_encode::<foxglove::schemas::RawImage>()?
-                    .add_channel_with_id(index as _, &topic.name)
-                    .unwrap()
-                    .message_count(topic.timestamps.len() as _);
-            } else {
-                init.add_channel_with_id(index as _, &topic.name)
-                    .expect("wont exist")
-                    .message_count(topic.timestamps.len() as _)
-                    .message_encoding("json");
-            }
         }
 
         self.file = Some(file);
@@ -266,6 +344,26 @@ impl DataLoader for Hdf5Loader {
                 .collect(),
             complete: false,
         })
+    }
+
+    fn get_backfill(&mut self, args: BackfillArgs) -> Result<Vec<Message>, Self::Error> {
+        let mut out = vec![];
+
+        for channel_id in args.channels {
+            let topic = &self.topics[channel_id as usize];
+
+            let Some((timestamp, _)) = topic.timestamps.range(..args.time).next_back() else {
+                continue;
+            };
+
+            let Some(messages) = topic.messages_at(channel_id, *timestamp) else {
+                continue;
+            };
+
+            out.extend(messages?);
+        }
+
+        Ok(out)
     }
 }
 

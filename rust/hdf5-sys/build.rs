@@ -6,51 +6,10 @@ fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("failed to get manifest dir");
     let package_root = PathBuf::from(manifest_dir);
 
-    // let mut config = cmake::Config::new("/Users/bennett/git/hdf5/");
     let mut config = cmake::Config::new("hdf5_with_plugins");
 
     config
         .define("CMAKE_BUILD_TYPE", "Release")
-        // .define("BUILD_SHARED_LIBS", "on")
-        // .define("BUILD_STATIC_LIBS", "on")
-        // .define("HDF_PACKAGE_NAMESPACE", "hdf5::")
-        // .define("HDF5_BUILD_EXAMPLES", "off")
-        // .define("HDF5_BUILD_TOOLS", "off")
-        // .define("HDF5_BUILD_UTILS", "off")
-        // .define("HDF5_BUILD_CPP_LIB", "off")
-        // .define("HDF5_ALLOW_EXTERNAL_SUPPORT", "TGZ")
-        // .define("HDF5_ENABLE_ZLIB_SUPPORT", "on")
-        // .define("ZLIB_USE_EXTERNAL", "on")
-        // .define("HDF5_USE_ZLIB_STATIC", "on")
-        // .define("HDF5_ENABLE_PLUGIN_SUPPORT", "on")
-        // .define("PLUGIN_USE_EXTERNAL", "on")
-        // .define("HDF5_NO_PACKAGES", "off")
-        // .define("H5PL_ALLOW_EXTERNAL_SUPPORT", "TGZ")
-        // .define("H5PL_BUILD_TESTING", "off")
-        // .define("ENABLE_BLOSC", "off")
-        // .define("ENABLE_BLOSC2", "off")
-        // .define("ENABLE_BZIP2", "off")
-        // .define("ENABLE_LZ4", "off")
-        // .define("ENABLE_ZFP", "off")
-        // .define("ENABLE_ZSTD", "off")
-        // .define("ENABLE_BSHUF", "off")
-
-        // .define("H5PL_CPACK_ENABLE", "on")
-        // // .define("ZLIB_GIT_URL", "https://github.com/madler/zlib.git")
-        // // .define("ZLIB_GIT_TAG", "v1.3.1")
-        // // .define("HDF5_ENABLE_PLUGIN_SUPPORT", "on")
-        // // .define("PLUGIN_USE_LOCALCONTENT", "off")
-        // // .define("HDF5_ENABLE_PLUGIN_SUPPORT", "on")
-        // // .define("HDF5_ENABLE_SZIP_SUPPORT", "on")
-        // // .define("HDF5_ENABLE_SZIP_SUPPORT", "on")
-        // .define("HDF5_PACKAGE_EXTLIBS", "on")
-        // // .define("HDF5_ALLOW_EXTERNAL_SUPPORT ", "GIT")
-        // // .define("PLUGIN_USE_LOCALCONTENT", "0")
-        // // // .define("PLUGIN_USE_EXTERNAL", "1")
-        // // .define("ZLIB_USE_LOCAL_CONTENT", "0")
-        // // .define("SZIP_USE_EXTERNAL", "1")
-        // // .define("ZLIB_USE_EXTERNAL", "1")
-        // // .define("HDF5_EXTERNALLY_CONFIGURED", "1")
         .define("H5_HAVE_GETPWUID", "off")
         .define("H5_HAVE_SIGNAL", "off")
         .define("H5_HAVE_FEATURES_H", "off");
@@ -117,7 +76,10 @@ fn main() {
         .expect("Couldn't write bindings!");
 
     println!("cargo:rustc-link-search=native={}/lib", dst.display());
-    println!("cargo:rustc-link-search=native={}/lib/plugin", dst.display());
+    println!(
+        "cargo:rustc-link-search=native={}/lib/plugin",
+        dst.display()
+    );
     println!("cargo:rustc-link-lib=static=hdf5");
     println!("cargo:rustc-link-lib=static=zlib-static");
     println!("cargo:rustc-link-lib=static=aec");

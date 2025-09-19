@@ -3,6 +3,7 @@ pub mod log;
 #[cfg(target_arch = "wasm32")]
 pub mod wasm_vfs;
 
+use core::time;
 use std::collections::{BTreeMap, BTreeSet};
 
 use hdf5::*;
@@ -19,9 +20,9 @@ struct Topic {
 fn main() -> anyhow::Result<()> {
     init_lzf();
 
-    let file =
-        // Hdf5File::open("/Users/bennett/Downloads/BUV-Nimbus04_L3zm_v01-02-2013m0422t101810.h5")?;
-        Hdf5File::open("/Users/bennett/Downloads/TMNT/scenario1/scenario1_1.h5")?;
+    let loader = use
+
+    let file = Hdf5File::open("/Users/bennett/Downloads/BUV-Nimbus04_L3zm_v01-02-2013m0422t101810.h5")?;
 
     let datasets = file.get_datasets();
 
@@ -32,7 +33,28 @@ fn main() -> anyhow::Result<()> {
             continue;
         }
 
-        let timestamp_dataset = datasets.get(&format!("{}.timestamp", dataset.name));
+        println!("{:?}", dataset.attrs);
+
+        let mut timestamp_dataset = datasets.get(&format!("{}.timestamp", dataset.name));
+
+        if let Some(Attribute::Vlen(dimensions)) = dataset.attrs.get("DIMENSION_LIST") {
+            for (index, dimension) in dimensions.iter().enumerate() {
+                let Attribute::Reference(name) = dimension else {
+                    continue;
+                };
+
+                let Some(dataset) = datasets.get(name) else {
+                    continue;
+                };
+
+                if !dataset.name.contains("time") {
+                    continue;
+                }
+
+                timestamp_dataset = Some(dataset);
+            }
+        }
+
         let parameters_dataset = datasets.get(&format!("{}.parameters", dataset.name));
 
         let Some(timestamp_dataset) = timestamp_dataset else {
@@ -42,9 +64,12 @@ fn main() -> anyhow::Result<()> {
 
         let mut timestamps: TimestampIndex = Default::default();
 
-        let (timestamp_data, _) = timestamp_dataset.read::<u64>(0)?;
+        let (timestamp_data, _) = timestamp_dataset.read::<u64>()?;
 
-        assert_eq!(timestamp_data.len(), timestamp_dataset.dimensions[0] as _);
+        assert_eq!(
+            timestamp_data.len(),
+            timestamp_dataset.dimensions[0] as usize
+        );
 
         for (i, timestamp) in timestamp_data.into_iter().enumerate() {
             let entry = timestamps.entry(timestamp).or_default();
@@ -52,29 +77,31 @@ fn main() -> anyhow::Result<()> {
         }
 
         println!(
-            "{ } - {:?} - image:{}",
+            "{ } - {:?} - image:{} - {:?} - {:?}",
             dataset.name,
             dataset.type_,
-            dataset.is_image_topic()
+            dataset.is_image_topic(),
+            parameters_dataset.map(|x| &x.attrs),
+            dataset.dimensions,
         );
 
         if (!dataset.is_image_topic()) {
             continue;
         }
 
-        for ( _, entry ) in timestamps.iter() {
+        for (_, entry) in timestamps.iter() {
             for i in entry {
-        match dataset.type_ {
-            DatasetType::Float => {
-                dataset.read_one::<f64>(*i)?;
-            },
+                match dataset.type_ {
+                    DatasetType::Float => {
+                        dataset.read_at_index::<f32>(*i)?;
+                    }
 
-            DatasetType::Integer => {
-                dataset.read_one::<i64>(*i)?;
-            },
+                    DatasetType::Integer => {
+                        dataset.read_at_index::<i64>(*i)?;
+                    }
 
-            _ =>{ }
-        }
+                    _ => {}
+                }
             }
         }
 

@@ -9,10 +9,7 @@ use std::{
     usize,
 };
 
-use foxglove_data_loader::{
-    console,
-    reader::{Reader, open},
-};
+use crate::error;
 
 unsafe extern "C" fn vfs_hdf5_close(h: *mut H5FD_t) -> herr_t {
     println!("closing file");
@@ -20,12 +17,17 @@ unsafe extern "C" fn vfs_hdf5_close(h: *mut H5FD_t) -> herr_t {
     0
 }
 
+trait InnerReader: Read + Seek {}
+
 #[repr(C)]
 struct WasmFile {
     //
     parent: H5FD_t,
     // fields from here are private to this vfs
-    reader: BufReader<Reader>,
+    #[cfg(target_arch = "wasm32")]
+    reader: BufReader<foxglove_data_loader::reader::Reader>,
+    #[cfg(not(target_arch = "wasm32"))]
+    reader: BufReader<File>,
     size: u64,
     eoa: u64,
 }
@@ -40,10 +42,16 @@ unsafe extern "C" fn vfs_hdf5_open(
 
     let path = CStr::from_ptr(name).to_string_lossy();
 
-    console::log(&format!("file name: {path:?}"));
-
-    let reader = open(&*path);
+    #[cfg(target_arch = "wasm32")]
+    let reader = foxglove_data_loader::reader::open(&*path);
+    #[cfg(target_arch = "wasm32")]
     let size = reader.size();
+
+    #[cfg(not(target_arch = "wasm32"))]
+    let reader = std::fs::File::open(&*path).unwrap();
+    #[cfg(not(target_arch = "wasm32"))]
+    let size = reader.metadata().unwrap().len();
+
     let reader = BufReader::new(reader);
 
     let file = Box::new(WasmFile {
@@ -98,8 +106,7 @@ unsafe extern "C" fn vfs_write(
     size: usize,
     buffer: *const ::std::os::raw::c_void,
 ) -> herr_t {
-    console::error("tried to call write");
-
+    error!("tried to call write");
     -1
 }
 

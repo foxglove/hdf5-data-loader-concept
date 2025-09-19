@@ -4,15 +4,18 @@
 use std::{
     cell::OnceCell,
     collections::BTreeMap,
-    ffi::{CStr, CString, c_char, c_void},
-    fmt::{Display, write},
+    ffi::{c_char, c_void, CStr, CString},
+    fmt::{write, Display},
     mem::MaybeUninit,
     ptr::null,
     str::FromStr,
-    sync::OnceLock,
+    sync::{atomic::{AtomicBool, AtomicUsize}, Arc, OnceLock},
 };
 
 use anyhow::bail;
+use foxglove::schemas::RawImage;
+// use foxglove_data_loader::console;
+use crate::error;
 use hdf5_sys::*;
 
 static FAPL: OnceLock<i64> = OnceLock::new();
@@ -27,7 +30,7 @@ const H5Z_LZF: &'static H5Z_class1_t = &H5Z_class1_t {
     name: c"lzf".as_ptr(),
     filter: Some(H5Z_lzf_filter),
     set_local: Some(H5Z_lzf_set_local),
-    can_apply: None,        
+    can_apply: None,
 };
 
 pub fn init_lzf() {
@@ -58,7 +61,7 @@ pub struct Hdf5File {
     handle: i64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum DatasetType {
     Integer,
     Float,
@@ -112,7 +115,7 @@ pub struct Dataset {
     pub attrs: BTreeMap<String, Attribute>,
     pub references: Vec<String>,
     pub dimensions: Vec<u64>,
-    pub time_dimension: Option<usize>,
+    pub time_dimension: Arc<AtomicUsize>
 }
 
 pub trait ToNativeType: Default + Clone {
@@ -143,17 +146,19 @@ impl ToNativeType for u16 {
     }
 }
 
-impl ToNativeType for f64 {
+impl ToNativeType for f32 {
     fn native_type() -> i64 {
         unsafe { H5T_NATIVE_FLOAT_g }
     }
 }
 
-impl Dataset {
-    fn is_time(&self) -> bool {
-        false
+impl ToNativeType for f64 {
+    fn native_type() -> i64 {
+        unsafe { H5T_NATIVE_DOUBLE_g }
     }
+}
 
+impl Dataset {
     pub fn is_image_topic(&self) -> bool {
         let is_image_name = ["image", "camera", "video", "depth"]
             .iter()
@@ -170,7 +175,7 @@ impl Dataset {
         Some(self.dimensions[self.time_dimension?])
     }
 
-    pub fn read_one<T: ToNativeType>(&self, offset: u64) -> anyhow::Result<Vec<T>> {
+    pub fn read_at_index<T: ToNativeType>(&self, offset: u64) -> anyhow::Result<Vec<T>> {
         let dset_id = unsafe { H5Dopen2(self.root_id, self.original_name.as_ptr(), 0) };
         let dataspace_id = unsafe { H5Dget_space(dset_id) };
         let ndims = unsafe { H5Sget_simple_extent_ndims(dataspace_id) };
@@ -185,13 +190,14 @@ impl Dataset {
             )
         };
 
-        let mut offsets = vec![0; ndims as _];
+        let mut offsets = vec![0_u64; ndims as _];
         offsets[0] = offset;
 
         let mut counts = dims.clone();
         counts[0] = 1;
 
-        let mut values = vec![T::default(); counts[..].iter().copied().reduce(|a, b| a * b).unwrap() as usize];
+        let mut values =
+            vec![T::default(); counts[..].iter().copied().reduce(|a, b| a * b).unwrap() as usize];
 
         let status = unsafe {
             H5Sselect_hyperslab(
@@ -204,7 +210,9 @@ impl Dataset {
             )
         };
 
-        assert_eq!(status, 0);
+        if status != 0 {
+            bail!("failed to select hyperslab at index");
+        }
 
         let memspace_id =
             unsafe { H5Screate_simple(ndims, counts.as_ptr() as *const _, std::ptr::null()) };
@@ -220,7 +228,9 @@ impl Dataset {
             )
         };
 
-        assert_eq!(status, 0);
+        if status != 0 {
+            bail!("failed to read at index");
+        }
 
         unsafe {
             H5Sclose(memspace_id);
@@ -231,14 +241,16 @@ impl Dataset {
         Ok(values)
     }
 
-    pub fn read<T: ToNativeType>(&self, offset: u64) -> anyhow::Result<(Vec<T>, Vec<u64>)> {
+    pub fn read<T: ToNativeType>(&self) -> anyhow::Result<(Vec<T>, Vec<u64>)> {
         let dset_id = unsafe { H5Dopen2(self.root_id, self.original_name.as_ptr(), 0) };
         let dataspace_id = unsafe { H5Dget_space(dset_id) };
         let ndims = unsafe { H5Sget_simple_extent_ndims(dataspace_id) };
 
+        error!("{ndims}");
+
         let mut dims = vec![0_u64; ndims as _];
 
-        unsafe {
+        let status = unsafe {
             H5Sget_simple_extent_dims(
                 dataspace_id,
                 dims.as_mut_ptr() as *mut _,
@@ -246,10 +258,16 @@ impl Dataset {
             )
         };
 
-        let mut values = vec![T::default(); dims.iter().copied().reduce(|a, b| a * b).unwrap() as usize];
+        error!("{dims:?}");
 
-        let mut offsets = vec![0; ndims as _];
-        offsets[0] = offset;
+        // if status != 0 {
+        //     bail!("failed to read dims");
+        // }
+
+        let mut values =
+            vec![T::default(); dims.iter().copied().reduce(|a, b| a * b).unwrap() as usize];
+
+        let offsets = vec![0_u64; ndims as _];
 
         let status = unsafe {
             H5Sselect_hyperslab(
@@ -263,9 +281,12 @@ impl Dataset {
         };
 
         assert_eq!(status, 0);
+        // if status != 0 {
+        //     bail!("failed to select hyperslab");
+        // }
 
         let memspace_id =
-            unsafe { H5Screate_simple(2, dims.as_ptr() as *const _, std::ptr::null()) };
+            unsafe { H5Screate_simple(ndims, dims.as_ptr() as *const _, std::ptr::null()) };
 
         let status = unsafe {
             H5Dread(
@@ -279,6 +300,9 @@ impl Dataset {
         };
 
         assert_eq!(status, 0);
+        // if status != 0 {
+        //     bail!("failed to read data");
+        // }
 
         unsafe {
             H5Sclose(memspace_id);
@@ -311,6 +335,78 @@ struct AttrIterateData {
     obj: hid_t,
 }
 
+fn read_string_attr(attr_id: hid_t) -> anyhow::Result<String> {
+    unsafe {
+        // Inspect the attribute’s datatype
+        let attr_type = H5Aget_type(attr_id);
+        if H5Tget_class(attr_type) != H5T_class_t_H5T_STRING {
+            bail!("attribute is not a string");
+        }
+
+        // (Optional) capture charset & padding for trimming
+        let cset: H5T_cset_t = H5Tget_cset(attr_type);
+        let pad: H5T_str_t = H5Tget_strpad(attr_type);
+
+        // Make a memory type we control (best practice).
+        // For strings, copy C_S1 and configure either fixed size or VARIABLE.
+        let mem_type = H5Tcopy(H5T_C_S1_g);
+        H5Tset_cset(mem_type, cset); // preserve ASCII/UTF-8 flag
+
+        let is_vlen = H5Tis_variable_str(attr_type) > 0;
+        if is_vlen {
+            // Variable-length string: read as a pointer that HDF5 allocates.
+            H5Tset_size(mem_type, H5T_VARIABLE as _);
+            let mut ptr: *mut c_char = std::ptr::null_mut();
+            let status = H5Aread(attr_id, mem_type, &mut ptr as *mut _ as *mut _);
+            if status < 0 {
+                bail!("H5Aread failed (vlen)");
+            }
+            if ptr.is_null() {
+                return Ok(String::new());
+            }
+            // Copy to Rust String (respects declared charset, but we’ll treat as UTF-8/ASCII)
+            let s = CStr::from_ptr(ptr).to_string_lossy().into_owned();
+            // Free HDF5-owned memory
+            H5free_memory(ptr as *mut _);
+            Ok(s)
+        } else {
+            // Fixed-length: read into a byte buffer and trim padding
+            let n = H5Tget_size(attr_type) as usize;
+            H5Tset_size(mem_type, n);
+
+            let mut buf: Vec<u8> = vec![0u8; n];
+            let status = H5Aread(attr_id, mem_type, buf.as_mut_ptr() as *mut _);
+            if status < 0 {
+                bail!("H5Aread failed (fixed)");
+            }
+
+            // Trim according to declared padding
+            let trimmed = match pad {
+                H5T_str_t_H5T_STR_NULLTERM | H5T_str_t_H5T_STR_NULLPAD => {
+                    // stop at first NUL
+                    if let Some(z) = buf.iter().position(|&b| b == 0) {
+                        &buf[..z]
+                    } else {
+                        &buf[..]
+                    }
+                }
+                H5T_str_t_H5T_STR_SPACEPAD => {
+                    // rtrim spaces
+                    let mut end = buf.len();
+                    while end > 0 && buf[end - 1] == b' ' {
+                        end -= 1;
+                    }
+                    &buf[..end]
+                }
+                _ => &buf[..],
+            };
+
+            // Convert; if ASCII charset, this is still fine in UTF-8.
+            Ok(String::from_utf8_lossy(trimmed).into_owned())
+        }
+    }
+}
+
 unsafe extern "C" fn hfd5_object_attr_visit_callback(
     obj_id: hid_t,
     attr_name: *const ::std::os::raw::c_char,
@@ -329,13 +425,9 @@ unsafe extern "C" fn hfd5_object_attr_visit_callback(
 
     match attr_class {
         H5T_class_t_H5T_STRING => {
-            let size = unsafe { H5Tget_size(attr_type) };
-            let mut str: Vec<u8> = vec![0; size as _];
-            unsafe { H5Aread(attr_id, attr_type, &mut str[..] as *mut [u8] as *mut _) };
-
-            let str = String::from_utf8_lossy(&str[..]);
-
-            data.attrs.insert(name, Attribute::Str(str.to_string()));
+            if let Ok(attr) = read_string_attr(attr_id) {
+                data.attrs.insert(name, Attribute::Str(attr));
+            }
         }
 
         H5T_class_t_H5T_VLEN => {
@@ -469,7 +561,7 @@ unsafe extern "C" fn hdf5_object_visit_callback(
                     dimensions: dims[..ndims as _].to_vec(),
                     attrs: attrs.attrs,
                     references: attrs.references,
-                    time_dimension: None,
+                    time_dimension: Some(0),
                 },
             );
         }
